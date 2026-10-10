@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
-    <title>أداة إزالة خلفية الصور المتطورة</title>
+    <title>Remove</title>
     <script src="https://cdn.jsdelivr.net/gh/Eya2d/Wave-cloud/wave-cloud.js"></script>
 
     <link rel="icon" href="icon.png" />
@@ -280,34 +280,34 @@
         <!-- إعدادات الوضعين القديمين -->
         <div id="classicSettings" style="display: none">
           <div class="slider-container">
-            <div class="slider-label">
-              <span>حساسية إزالة الخلفية</span>
-              <span id="sensitivityValue">100%</span>
-            </div>
-            <input
-              type="range"
-              min="1"
-              max="100"
-              value="100"
-              class="slider"
-              id="sensitivitySlider"
-            />
+          <div class="slider-label">
+            <span>حساسية إزالة الخلفية</span>
+            <span id="sensitivityValue">100%</span>
           </div>
+          <input
+            type="range"
+            min="1"
+            max="100"
+            value="100"
+            class="slider"
+            id="sensitivitySlider"
+          />
+        </div>
 
-          <div class="slider-container">
-            <div class="slider-label">
-              <span>دقة المعالجة</span>
-              <span id="qualityValue">عالية (300%)</span>
-            </div>
-            <input
-              type="range"
-              min="1"
-              max="3"
-              value="3"
-              class="slider"
-              id="qualitySlider"
-            />
+        <div class="slider-container">
+          <div class="slider-label">
+            <span>دقة المعالجة</span>
+            <span id="qualityValue">عالية (300%)</span>
           </div>
+          <input
+            type="range"
+            min="1"
+            max="3"
+            value="3"
+            class="slider"
+            id="qualitySlider"
+          />
+        </div>
         </div>
 
         <div class="controls">
@@ -348,19 +348,6 @@
           </h3>
           <p>
             تعمل هذه الأداة بالكامل داخل المتصفح، ولا يتم رفع صورك إلى أي خادم.
-          </p>
-          <p>
-            <strong>وضع الذكاء الاصطناعي:</strong> نموذج تعلّم عميق (RMBG-1.4)
-            يفصل الجسم الرئيسي عن الخلفية بدقة عالية، حتى في الصور المعقدة.
-            النموذج مجاني للاستخدام غير التجاري فقط.
-          </p>
-          <p>
-            <strong>وضع الخلفية الفاتحة:</strong> يزيل الخلفية الفاتحة تلقائياً
-            بالألوان، وهو مناسب للخلفيات البيضاء البسيطة.
-          </p>
-          <p>
-            <strong>وضع إزالة اللون المحدد:</strong> يزيل لوناً محدداً تختاره من
-            الصورة.
           </p>
         </div>
       </div>
