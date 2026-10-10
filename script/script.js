@@ -1,4 +1,13 @@
 // ============================================================
+// عناصر القائمة الجانبية + كشف الهاتف (يجب أن يسبق الثوابت)
+// ============================================================
+const MOBILE_QUERY = window.matchMedia("(max-width: 768px)");
+const IS_MOBILE =
+  MOBILE_QUERY.matches ||
+  /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+  (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.platform)); // iPad
+
+// ============================================================
 // إعدادات وضع الذكاء الاصطناعي (يعمل بالكامل داخل المتصفح)
 // ============================================================
 // مكتبة Transformers.js تُحمَّل عند أول استخدام فقط (استيراد ديناميكي)
@@ -6,9 +15,10 @@ const TRANSFORMERS_URL =
   "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1";
 // النموذج: RMBG-1.4 من BRIA (ترخيصه لغير التجاري، راجع صفحة النموذج قبل الاستخدام التجاري)
 const AI_MODEL_ID = "briaai/RMBG-1.4";
-const AI_INPUT_SIZE = 1024; // الحجم الذي يعمل عليه النموذج
-const AI_MAX_DIMENSION = 3000; // أكبر بُعد للصورة الناتجة في وضع الذكاء الاصطناعي
-const CLASSIC_MAX_DIMENSION = 2000; // الحد الأقصى في الوضعين القديمين
+const AI_INPUT_SIZE = IS_MOBILE ? 512 : 1024; // الحجم الذي يعمل عليه النموذج
+const AI_MAX_DIMENSION = IS_MOBILE ? 1600 : 3000; // أكبر بُعد للصورة الناتجة
+const CLASSIC_MAX_DIMENSION = IS_MOBILE ? 1200 : 2000; // الحد الأقصى في الوضعين القديمين
+const MAX_FILES = IS_MOBILE ? 10 : 50;
 const DEFAULT_MODE = "ai";
 
 // عناصر DOM
@@ -51,7 +61,6 @@ const modalDownload = document.getElementById("modalDownload");
 const menuBtn = document.getElementById("menuBtn");
 const closeSidebarBtn = document.getElementById("closeSidebar");
 const sidebarOverlay = document.getElementById("sidebarOverlay");
-const MOBILE_QUERY = window.matchMedia("(max-width: 768px)");
 
 // أيقونة SVG من مكتبة الأيقونات الموجودة في index.html
 const icon = (name) => `<svg class="icon"><use href="#i-${name}"/></svg>`;
@@ -198,10 +207,10 @@ closeModal.addEventListener("click", () => {
 
 modalDownload.addEventListener("click", () => {
   if (currentModalImage) {
-    const link = document.createElement("a");
-    link.download = `صورة_بدون_خلفية_${currentModalImage.id + 1}.png`;
-    link.href = currentModalImage.resultDataUrl;
-    link.click();
+    saveImage(
+      currentModalImage,
+      `صورة_بدون_خلفية_${currentModalImage.id + 1}.png`
+    );
   }
 });
 
@@ -219,8 +228,8 @@ function handleImageUpload() {
   const files = Array.from(fileInput.files);
 
   // التحقق من عدد الملفات
-  if (files.length > 50) {
-    alert("يمكنك تحميل 50 صورة كحد أقصى في المرة الواحدة");
+  if (files.length > MAX_FILES) {
+    alert(`يمكنك تحميل ${MAX_FILES} صور كحد أقصى في المرة الواحدة`);
     return;
   }
 
@@ -231,46 +240,39 @@ function handleImageUpload() {
     imagesGrid.innerHTML = "";
   }
 
-  let loadedCount = 0;
-
   files.forEach((file) => {
-    if (!file.type.match("image.*")) {
+    if (!file.type.startsWith("image/")) {
       alert("الرجاء تحميل ملفات صورة فقط");
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
-        // إضافة الصورة إلى المصفوفة
-        const imageObj = {
-          id: uploadedImages.length,
-          file: file,
-          src: e.target.result,
-          img: img,
-          processed: false,
-          resultDataUrl: null,
-          aiMask: null, // قناع النموذج المخزَّن مؤقتاً لإعادة الضبط دون إعادة التشغيل
-        };
-
-        uploadedImages.push(imageObj);
-
-        // إضافة الصورة إلى الشبكة
-        addImageToGrid(imageObj);
-
-        loadedCount++;
-
-        // تفعيل الأزرار بعد تحميل الصور
-        if (loadedCount === files.length) {
-          removeBgBtn.disabled = isBusy;
-          removeAllBgBtn.disabled = isBusy;
-          downloadAllBtn.disabled = false;
-        }
+    // createObjectURL بدل FileReader لتوفير الذاكرة
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const imageObj = {
+        id: uploadedImages.length,
+        file: file,
+        src: url,
+        img: img,
+        processed: false,
+        resultDataUrl: null,
+        aiMask: null, // قناع النموذج المخزَّن مؤقتاً لإعادة الضبط دون إعادة التشغيل
       };
-      img.src = e.target.result;
+
+      uploadedImages.push(imageObj);
+      addImageToGrid(imageObj);
+
+      // تفعيل الأزرار
+      removeBgBtn.disabled = isBusy;
+      removeAllBgBtn.disabled = isBusy;
+      downloadAllBtn.disabled = false;
+
+      // تحميل النموذج مسبقاً في وقت الخمول
+      preloadAIEngine();
     };
-    reader.readAsDataURL(file);
+    img.onerror = () => URL.revokeObjectURL(url);
+    img.src = url;
   });
 }
 
@@ -312,7 +314,12 @@ function addImageToGrid(imageObj) {
 // إزالة صورة من القائمة
 function removeImage(id) {
   const removed = uploadedImages.find((img) => img.id === id);
-  if (removed) revokeResult(removed);
+  if (removed) {
+    revokeResult(removed);
+    if (removed.src && removed.src.startsWith("blob:")) {
+      URL.revokeObjectURL(removed.src);
+    }
+  }
 
   // إزالة الصورة من المصفوفة
   uploadedImages = uploadedImages.filter((img) => img.id !== id);
@@ -330,22 +337,11 @@ function removeImage(id) {
     previewItem.remove();
   }
 
-  // إعادة تعيين معرفات الصور
+  // إعادة تعيين معرفات الصور (نحدّث العناصر حسب ترتيبها في الشبكة)
+  const gridItems = Array.from(imagesGrid.querySelectorAll(".image-item"));
   uploadedImages.forEach((img, index) => {
     img.id = index;
-    const imageItem = document.querySelector(
-      `.image-item[data-id="${img.id}"]`
-    );
-    if (imageItem) {
-      imageItem.dataset.id = index;
-    }
-
-    const previewItem = document.querySelector(
-      `.preview-item[data-id="${img.id}"]`
-    );
-    if (previewItem) {
-      previewItem.dataset.id = index;
-    }
+    if (gridItems[index]) gridItems[index].dataset.id = index;
   });
 
   // تحديث حالة الأزرار
@@ -356,7 +352,7 @@ function removeImage(id) {
     downloadSelectedBtn.disabled = true;
   }
 
-  // تحديث المعاينة
+  // تحديث المعاينة (يعيد بناء العناصر بالمعرفات الجديدة)
   updatePreviewGrid();
 }
 
@@ -366,6 +362,19 @@ function removeImage(id) {
 let aiEngine = null; // { model, processor, RawImage, device }
 let aiEnginePromise = null;
 let aiForceWasm = false; // يُفعَّل تلقائياً إذا فشل WebGPU
+
+// تحميل مسبق في وقت الخمول بعد رفع أول صورة
+function preloadAIEngine() {
+  if (removalMode !== "ai" || aiEngine || aiEnginePromise) return;
+  const c = navigator.connection;
+  if (c && (c.saveData || /2g/.test(c.effectiveType))) return; // لا نستهلك بيانات المستخدم
+  const run = () => loadAIEngine().catch(() => {});
+  if ("requestIdleCallback" in window) {
+    requestIdleCallback(run, { timeout: 3000 });
+  } else {
+    setTimeout(run, 1500);
+  }
+}
 
 function loadAIEngine() {
   if (aiEngine) return Promise.resolve(aiEngine);
@@ -411,16 +420,22 @@ function loadAIEngine() {
       },
     });
 
-    // WebGPU إن توفر (أسرع بكثير)، وإلا WASM
-    const devices = navigator.gpu && !aiForceWasm ? ["webgpu", "wasm"] : ["wasm"];
+    // الهاتف: WASM دائماً (WebGPU غير مستقر وذاكرته محدودة)
+    const devices =
+      !IS_MOBILE && navigator.gpu && !aiForceWasm ? ["webgpu", "wasm"] : ["wasm"];
     let model = null;
     let device = null;
 
     for (const d of devices) {
       try {
-        // تشغيل WASM في خيط منفصل حتى لا تتجمد الواجهة أثناء المعالجة
         if (env.backends && env.backends.onnx && env.backends.onnx.wasm) {
-          env.backends.onnx.wasm.proxy = d === "wasm";
+          const wasm = env.backends.onnx.wasm;
+          // تشغيل WASM في خيط منفصل حتى لا تتجمد الواجهة أثناء المعالجة
+          wasm.proxy = d === "wasm";
+          // خيوط متعددة فقط إذا كانت مدعومة
+          wasm.numThreads = self.crossOriginIsolated
+            ? Math.min(4, navigator.hardwareConcurrency || 2)
+            : 1;
         }
         model = await AutoModel.from_pretrained(AI_MODEL_ID, {
           config: { model_type: "custom" },
@@ -461,6 +476,7 @@ async function runAIModel(engine, img) {
   cctx.drawImage(img, 0, 0, AI_INPUT_SIZE, AI_INPUT_SIZE);
   const px = cctx.getImageData(0, 0, AI_INPUT_SIZE, AI_INPUT_SIZE);
   const raw = new RawImage(px.data, AI_INPUT_SIZE, AI_INPUT_SIZE, 4);
+  c.width = c.height = 0; // تحرير الذاكرة
 
   const { pixel_values } = await processor(raw);
   const outputs = await model({ input: pixel_values });
@@ -471,7 +487,7 @@ async function runAIModel(engine, img) {
   const w = dims[dims.length - 1];
   const values = out.getData ? await out.getData() : out.data;
 
-  // نخزن القناع بدقة 8 بت لتوفير الذاكرة (1 ميجا لكل صورة)
+  // نخزن القناع بدقة 8 بت لتوفير الذاكرة
   const data = new Uint8Array(w * h);
   for (let i = 0; i < data.length; i++) {
     const v = values[i];
@@ -509,45 +525,13 @@ async function getAIMask(imageObj) {
 }
 
 // تطبيق القناع على الصورة الأصلية كقناة شفافية (Alpha)
+// بدون أي حلقة على بكسلات الصورة الكبيرة: الدمج يتم بالتسريع العتادي
 function renderWithMask(img, mask) {
   const srcW = img.naturalWidth || img.width;
   const srcH = img.naturalHeight || img.height;
   const scale = Math.min(1, AI_MAX_DIMENSION / Math.max(srcW, srcH));
   const w = Math.max(1, Math.round(srcW * scale));
   const h = Math.max(1, Math.round(srcH * scale));
-
-  // الصورة الأصلية بدقتها
-  const canvas = document.createElement("canvas");
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  ctx.drawImage(img, 0, 0, w, h);
-  const imageData = ctx.getImageData(0, 0, w, h);
-  const px = imageData.data;
-
-  // القناع: نرسمه على كانفاس صغير ثم نكبّره بنعومة لحجم الصورة
-  const maskCanvas = document.createElement("canvas");
-  maskCanvas.width = mask.w;
-  maskCanvas.height = mask.h;
-  const maskCtx = maskCanvas.getContext("2d");
-  const maskImage = maskCtx.createImageData(mask.w, mask.h);
-  for (let i = 0, j = 0; i < mask.data.length; i++, j += 4) {
-    const v = mask.data[i];
-    maskImage.data[j] = v;
-    maskImage.data[j + 1] = v;
-    maskImage.data[j + 2] = v;
-    maskImage.data[j + 3] = 255;
-  }
-  maskCtx.putImageData(maskImage, 0, 0);
-
-  const scaledCanvas = document.createElement("canvas");
-  scaledCanvas.width = w;
-  scaledCanvas.height = h;
-  const scaledCtx = scaledCanvas.getContext("2d", { willReadFrequently: true });
-  scaledCtx.imageSmoothingEnabled = true;
-  scaledCtx.imageSmoothingQuality = "high";
-  scaledCtx.drawImage(maskCanvas, 0, 0, w, h);
-  const maskPixels = scaledCtx.getImageData(0, 0, w, h).data;
 
   // جدول تحويل: قيمة القناع -> الشفافية، حسب "صرامة الإزالة" و"نعومة الحواف"
   const threshold = aiThresholdSlider.value / 100;
@@ -563,11 +547,30 @@ function renderWithMask(img, mask) {
     lut[v] = Math.round(a * 255);
   }
 
-  for (let i = 0; i < px.length; i += 4) {
-    px[i + 3] = Math.round((px[i + 3] * lut[maskPixels[i]]) / 255);
+  // القناع الصغير -> قناة ألفا
+  const maskCanvas = document.createElement("canvas");
+  maskCanvas.width = mask.w;
+  maskCanvas.height = mask.h;
+  const maskCtx = maskCanvas.getContext("2d");
+  const maskImage = maskCtx.createImageData(mask.w, mask.h);
+  for (let i = 0, j = 3; i < mask.data.length; i++, j += 4) {
+    maskImage.data[j] = lut[mask.data[i]];
   }
+  maskCtx.putImageData(maskImage, 0, 0);
 
-  ctx.putImageData(imageData, 0, 0);
+  // الدمج: الصورة الأصلية ثم destination-in بالقناع المكبَّر
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(img, 0, 0, w, h);
+  ctx.globalCompositeOperation = "destination-in";
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(maskCanvas, 0, 0, w, h);
+  ctx.globalCompositeOperation = "source-over";
+
+  maskCanvas.width = maskCanvas.height = 0; // تحرير الذاكرة
   return canvas;
 }
 
@@ -591,6 +594,7 @@ function revokeResult(imageObj) {
 
 async function storeResult(imageObj, canvas) {
   const url = await canvasToUrl(canvas);
+  canvas.width = canvas.height = 0; // تحرير الذاكرة
   revokeResult(imageObj);
   imageObj.resultDataUrl = url;
   imageObj.processed = true;
@@ -739,12 +743,12 @@ async function processImageClassic(imageObj) {
 
   // إنشاء كانفاس مؤقت للمعالجة
   const tempCanvas = document.createElement("canvas");
-  tempCanvas.width = width;
-  tempCanvas.height = height;
-  const tempCtx = tempCanvas.getContext("2d");
+  tempCanvas.width = Math.max(1, Math.round(width));
+  tempCanvas.height = Math.max(1, Math.round(height));
+  const tempCtx = tempCanvas.getContext("2d", { willReadFrequently: true });
 
   // رسم الصورة على الكانفاس المؤقت
-  tempCtx.drawImage(img, 0, 0, width, height);
+  tempCtx.drawImage(img, 0, 0, tempCanvas.width, tempCanvas.height);
 
   // الحصول على بيانات الصورة
   const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
@@ -892,42 +896,86 @@ function openImageModal(imageObj) {
   imageModal.style.display = "flex";
 }
 
+// ------------------------------------------------------------
+// التنزيل (مع دعم المشاركة/الحفظ في الصور على الهاتف)
+// ------------------------------------------------------------
+function anchorDownload(url, name) {
+  const a = document.createElement("a");
+  a.download = name;
+  a.href = url;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+async function imageToFile(imageObj, name) {
+  const blob = await (await fetch(imageObj.resultDataUrl)).blob();
+  return new File([blob], name, { type: "image/png" });
+}
+
+// حفظ صورة واحدة
+async function saveImage(imageObj, name) {
+  if (IS_MOBILE && navigator.canShare) {
+    try {
+      const file = await imageToFile(imageObj, name);
+      if (navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file] }); // "حفظ في الصور" على iOS/Android
+        return;
+      }
+    } catch (e) {
+      if (e.name === "AbortError") return;
+    }
+  }
+  anchorDownload(imageObj.resultDataUrl, name);
+}
+
+// حفظ عدة صور
+async function saveMany(images) {
+  if (images.length === 0) return;
+
+  // على الهاتف: نشاركها كلها في نافذة مشاركة واحدة (التنزيلات المتتالية تُحجب)
+  if (IS_MOBILE && navigator.canShare) {
+    try {
+      const files = await Promise.all(
+        images.map((img, i) => imageToFile(img, `صورة_بدون_خلفية_${i + 1}.png`))
+      );
+      if (navigator.canShare({ files })) {
+        await navigator.share({ files });
+        return;
+      }
+    } catch (e) {
+      if (e.name === "AbortError") return;
+    }
+  }
+
+  for (let i = 0; i < images.length; i++) {
+    anchorDownload(images[i].resultDataUrl, `صورة_بدون_خلفية_${i + 1}.png`);
+    await new Promise((r) => setTimeout(r, 400)); // المتصفح يحجب التنزيلات المتتالية السريعة
+  }
+}
+
 // تحميل صورة واحدة
 function downloadSingleImage(imageObj) {
-  const link = document.createElement("a");
-  link.download = `صورة_بدون_خلفية_${imageObj.id + 1}.png`;
-  link.href = imageObj.resultDataUrl;
-  link.click();
+  saveImage(imageObj, `صورة_بدون_خلفية_${imageObj.id + 1}.png`);
 }
 
 // تحميل جميع الصور المعالجة
 function downloadAllResults() {
-  if (processedImages.length === 0) return;
-
-  processedImages.forEach((image, index) => {
-    const link = document.createElement("a");
-    link.download = `صورة_بدون_خلفية_${index + 1}.png`;
-    link.href = image.resultDataUrl;
-    link.click();
-  });
+  saveMany(processedImages);
 }
 
 // تحميل الصور المحددة فقط
 function downloadSelectedResults() {
-  if (processedImages.length === 0) return;
-
-  processedImages.forEach((image, index) => {
-    const link = document.createElement("a");
-    link.download = `صورة_بدون_خلفية_${index + 1}.png`;
-    link.href = image.resultDataUrl;
-    link.click();
-  });
+  saveMany(processedImages);
 }
 
 // إعادة تعيين التطبيق
 function resetApp() {
   if (isBusy) return; // لا نعيد التعيين أثناء المعالجة
-  uploadedImages.forEach(revokeResult);
+  uploadedImages.forEach((img) => {
+    revokeResult(img);
+    if (img.src && img.src.startsWith("blob:")) URL.revokeObjectURL(img.src);
+  });
 
   fileInput.value = "";
   removeBgBtn.disabled = true;
