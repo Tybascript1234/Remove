@@ -7,11 +7,7 @@ const TRANSFORMERS_URL =
 // النموذج: RMBG-1.4 من BRIA (ترخيصه لغير التجاري، راجع صفحة النموذج قبل الاستخدام التجاري)
 const AI_MODEL_ID = "briaai/RMBG-1.4";
 const AI_INPUT_SIZE = 1024; // الحجم الذي يعمل عليه النموذج
-// كشف الهواتف والأجهزة اللوحية (ذاكرتها أقل: نستخدم نموذجاً أخف وصوراً أصغر)
-const IS_MOBILE =
-  /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
-  (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-const AI_MAX_DIMENSION = IS_MOBILE ? 2048 : 3000; // أكبر بُعد للصورة الناتجة في وضع الذكاء الاصطناعي
+const AI_MAX_DIMENSION = 3000; // أكبر بُعد للصورة الناتجة في وضع الذكاء الاصطناعي
 const CLASSIC_MAX_DIMENSION = 2000; // الحد الأقصى في الوضعين القديمين
 const DEFAULT_MODE = "ai";
 
@@ -370,7 +366,6 @@ function removeImage(id) {
 let aiEngine = null; // { model, processor, RawImage, device }
 let aiEnginePromise = null;
 let aiForceWasm = false; // يُفعَّل تلقائياً إذا فشل WebGPU
-let aiStage = ""; // المرحلة الحالية (لتشخيص الأخطاء)
 
 function loadAIEngine() {
   if (aiEngine) return Promise.resolve(aiEngine);
@@ -378,7 +373,6 @@ function loadAIEngine() {
 
   aiEnginePromise = (async () => {
     setLoadingText("جاري تحميل مكتبة الذكاء الاصطناعي...");
-    aiStage = "تحميل المكتبة";
     const tf = await import(TRANSFORMERS_URL);
     const { AutoModel, AutoProcessor, RawImage, env } = tf;
     env.allowLocalModels = false;
@@ -402,7 +396,6 @@ function loadAIEngine() {
     };
 
     // إعدادات المعالجة المسبقة الخاصة بنموذج RMBG-1.4
-    aiStage = "تحميل إعدادات النموذج";
     const processor = await AutoProcessor.from_pretrained(AI_MODEL_ID, {
       config: {
         do_normalize: true,
@@ -418,42 +411,30 @@ function loadAIEngine() {
       },
     });
 
-    // قائمة المحاولات بالترتيب:
-    // - الحاسوب: WebGPU (الأسرع) ثم WASM في worker ثم WASM عادي
-    // - الهاتف: WASM عادي فقط (WebGPU والـ worker غير مستقرين على كثير من الهواتف)
-    const attempts = [];
-    if (!IS_MOBILE && navigator.gpu && !aiForceWasm) {
-      attempts.push({ device: "webgpu", dtype: "fp32", proxy: false });
-    }
-    if (!IS_MOBILE) attempts.push({ device: "wasm", dtype: "q8", proxy: true });
-    attempts.push({ device: "wasm", dtype: "q8", proxy: false });
-
+    // WebGPU إن توفر (أسرع بكثير)، وإلا WASM
+    const devices = navigator.gpu && !aiForceWasm ? ["webgpu", "wasm"] : ["wasm"];
     let model = null;
     let device = null;
-    let lastError = null;
 
-    aiStage = "تحميل النموذج";
-    for (const a of attempts) {
+    for (const d of devices) {
       try {
+        // تشغيل WASM في خيط منفصل حتى لا تتجمد الواجهة أثناء المعالجة
         if (env.backends && env.backends.onnx && env.backends.onnx.wasm) {
-          env.backends.onnx.wasm.proxy = a.proxy;
-          // خيط واحد على الهاتف لتوفير الذاكرة
-          if (IS_MOBILE) env.backends.onnx.wasm.numThreads = 1;
+          env.backends.onnx.wasm.proxy = d === "wasm";
         }
         model = await AutoModel.from_pretrained(AI_MODEL_ID, {
           config: { model_type: "custom" },
-          device: a.device,
-          dtype: a.dtype,
+          device: d,
+          dtype: d === "webgpu" ? "fp32" : "q8",
           progress_callback,
         });
-        device = a.device + (a.proxy ? " (worker)" : "");
+        device = d;
         break;
       } catch (err) {
-        console.warn(`تعذّر تشغيل النموذج (${a.device}, proxy=${a.proxy})`, err);
-        lastError = err;
+        console.warn(`تعذّر تشغيل النموذج على ${d}`, err);
+        if (d === "wasm") throw err;
       }
     }
-    if (!model) throw lastError || new Error("تعذّر تحميل النموذج");
 
     aiEngine = { model, processor, RawImage, device };
     console.info(`نموذج الذكاء الاصطناعي جاهز (${device})`);
@@ -469,7 +450,6 @@ function loadAIEngine() {
 // تشغيل النموذج على صورة والحصول على القناع (0..255) بحجم مخرجات النموذج
 async function runAIModel(engine, img) {
   const { model, processor, RawImage } = engine;
-  aiStage = "تشغيل النموذج";
 
   // تصغير الصورة إلى حجم إدخال النموذج (الخلفية البيضاء تعالج الصور الشفافة)
   const c = document.createElement("canvas");
@@ -516,7 +496,7 @@ async function getAIMask(imageObj) {
   try {
     imageObj.aiMask = await runAIModel(engine, imageObj.img);
   } catch (err) {
-    if (!String(engine.device).startsWith("webgpu")) throw err;
+    if (engine.device !== "webgpu") throw err;
     // فشل WebGPU أثناء التشغيل: نعيد المحاولة على WASM
     console.warn("فشل WebGPU أثناء المعالجة، الرجوع إلى WASM", err);
     aiForceWasm = true;
@@ -624,12 +604,9 @@ async function storeResult(imageObj, canvas) {
 function showProcessingError(err) {
   console.error(err);
   if (removalMode === "ai") {
-    const detail = (err && (err.message || String(err))) || "";
     alert(
       "تعذّر تشغيل نموذج الذكاء الاصطناعي.\n" +
-        "تأكد من اتصالك بالإنترنت (مطلوب في أول استخدام فقط) ثم حاول مرة أخرى.\n\n" +
-        `المرحلة: ${aiStage || "غير معروفة"}\n` +
-        `التفاصيل: ${detail}`
+        "تأكد من اتصالك بالإنترنت (مطلوب في أول استخدام فقط) ثم حاول مرة أخرى."
     );
   } else {
     alert("حدث خطأ أثناء معالجة الصورة.");
